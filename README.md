@@ -31,7 +31,7 @@ One-shot commands:
 
 ## Commands
 
-Available slash commands in interactive mode:
+Available slash commands in interactive mode. [model-name] is optional, the first model returned will be used by default:
 
 - `/get-endpoint` - Get MaaS gateway endpoint from OpenShift cluster
 - `/get-token [expiration]` - Create a new service account token (default: 8h, examples: 1h, 30m, 24h)
