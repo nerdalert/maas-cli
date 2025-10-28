@@ -36,10 +36,15 @@ import (
 )
 
 const (
+	// Legacy IDP defaults (used when --idp flag is set)
 	defaultIssuer      = "https://keycloak.apps.maas2.octo-emerging.redhataicoe.com/realms/maas"
 	defaultControlBase = "http://key-manager.db.apps.maas2.octo-emerging.redhataicoe.com"
 	defaultDataBase    = "http://simulator.db.apps.maas2.octo-emerging.redhataicoe.com"
-	cliBanner          = `
+
+	// Base mode API defaults
+	defaultMaasAPIBase = "" // Will be auto-detected from OpenShift cluster
+
+	cliBanner = `
  ███░   ███░ █████░  █████░ ███████░     ██████░██░     ██░
  ████░ ████░██░░░██░██░░░██░██░░░░░░    ██░░░░░░██░     ██░
  ██░████░██░███████░███████░███████░    ██░     ██░     ██░
@@ -71,7 +76,7 @@ type TokenResponse struct {
 func main() {
 	// If no subcommand given, start interactive REPL
 	if len(os.Args) < 2 {
-		startInteractive()
+		startInteractive(false) // default mode (not IDP)
 		return
 	}
 
@@ -84,22 +89,28 @@ func main() {
 		fs.PrintDefaults()
 	}
 
-	// Configurable options
+	// Mode selection
+	fs.Bool("idp", false, "Use legacy IDP/Keycloak authentication mode (default: base OpenShift mode)")
+	fs.Bool("show-curl", false, "Print curl command only (for execution in another window)")
+
+	// Legacy IDP options (only used when --idp is set)
 	fs.String("issuer-url", defaultIssuer, "OIDC issuer base (e.g. https://.../realms/maas)")
 	fs.String("hostname", "", "Convenience: Keycloak host (builds issuer as https://<host>/realms/<realm>)")
 	fs.String("realm", "maas", "Realm used with --hostname to build issuer URL")
 	fs.String("client-id", "maas-client", "OIDC client ID")
 	fs.String("client-secret", "maas-client-secret", "OIDC client secret")
-	fs.Bool("insecure", true, "Allow insecure TLS (skip cert verification)")
-	fs.String("control-base", defaultControlBase, "Key manager API base URL")
-	fs.String("data-base", defaultDataBase, "Inference API base URL")
 	fs.Bool("no-browser", false, "Do not attempt to open browser automatically (alias to disabling --web)")
 	fs.Bool("web", true, "Open a browser window for authentication")
 	fs.Bool("clipboard", false, "Copy one-time code to clipboard (like gh --clipboard)")
 	fs.Bool("with-token", false, "Read access token from stdin instead of performing device flow")
 	fs.String("token-file", "", "Read access token from a file (used with --with-token)")
 	fs.Duration("timeout", 10*time.Minute, "Overall login timeout")
-	fs.Bool("show-curl", false, "Print the curl command and exit")
+
+	// Common options
+	fs.Bool("insecure", true, "Allow insecure TLS (skip cert verification)")
+	fs.String("control-base", defaultControlBase, "Legacy: Key manager API base URL (used with --idp)")
+	fs.String("data-base", defaultDataBase, "Legacy: Inference API base URL (used with --idp)")
+	fs.String("maas-api-base", defaultMaasAPIBase, "MaaS API base URL (auto-detected if empty)")
 
 	cmd := os.Args[1]
 	args := os.Args[2:]
@@ -121,6 +132,8 @@ func main() {
 	_ = v.ReadInConfig() // optional
 
 	// Bind flags
+	_ = v.BindPFlag("idp", fs.Lookup("idp"))
+	_ = v.BindPFlag("show-curl", fs.Lookup("show-curl"))
 	_ = v.BindPFlag("issuer-url", fs.Lookup("issuer-url"))
 	_ = v.BindPFlag("hostname", fs.Lookup("hostname"))
 	_ = v.BindPFlag("realm", fs.Lookup("realm"))
@@ -129,12 +142,15 @@ func main() {
 	_ = v.BindPFlag("insecure", fs.Lookup("insecure"))
 	_ = v.BindPFlag("control-base", fs.Lookup("control-base"))
 	_ = v.BindPFlag("data-base", fs.Lookup("data-base"))
+	_ = v.BindPFlag("maas-api-base", fs.Lookup("maas-api-base"))
 	_ = v.BindPFlag("no-browser", fs.Lookup("no-browser"))
 	_ = v.BindPFlag("web", fs.Lookup("web"))
 	_ = v.BindPFlag("clipboard", fs.Lookup("clipboard"))
 	_ = v.BindPFlag("with-token", fs.Lookup("with-token"))
 	_ = v.BindPFlag("token-file", fs.Lookup("token-file"))
 	_ = v.BindPFlag("timeout", fs.Lookup("timeout"))
+
+	useIDP := v.GetBool("idp")
 
 	switch cmd {
 	case "login":
@@ -143,20 +159,21 @@ func main() {
 			os.Exit(1)
 		}
 	case "interactive", "repl":
-		startInteractive()
+		startInteractive(useIDP)
 	case "help", "-h", "--help":
 		fs.Usage()
 	default:
 		// Fallback to interactive if unknown command
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\nStarting interactive mode...\n\n", cmd)
-		startInteractive()
+		startInteractive(useIDP)
 	}
 }
 
 type commandContext struct {
 	args     string
-	showCurl bool
+	showCurl bool // Print curl command only
 	showRaw  bool
+	useIDP   bool // Whether to use legacy IDP mode
 }
 
 type slashCommand struct {
@@ -167,15 +184,19 @@ type slashCommand struct {
 	ArgSuggest  func(args string) []prompt.Suggest
 }
 
-func startInteractive() {
+func startInteractive(useIDP bool) {
 	defer restoreTerminalState()
 
 	fmt.Println(cliBanner)
 	fmt.Println()
-	fmt.Println("MaaS CLI — Interactive Mode")
+	if useIDP {
+		fmt.Println("MaaS CLI — Interactive Mode (IDP)")
+	} else {
+		fmt.Println("MaaS CLI — Interactive Mode")
+	}
 	fmt.Println("Type / to run a command. Use ↑/↓ to move, ↵ to execute, Ctrl+D to quit.")
 
-	cmds := buildCommands()
+	cmds := buildCommands(useIDP)
 	printCommandOverview(cmds)
 
 	cmdMap := map[string]slashCommand{}
@@ -204,7 +225,7 @@ func startInteractive() {
 			}
 			if c, ok := cmdMap[name]; ok {
 				fs := pflag.NewFlagSet(name, pflag.ContinueOnError)
-				fs.Bool("show-curl", false, "Print the curl command and exit")
+				fs.Bool("show-curl", false, "Print curl command only (for execution in another window)")
 				fs.Bool("show-raw", false, "Show raw output from the curl command")
 
 				argParts := strings.Fields(args)
@@ -216,11 +237,12 @@ func startInteractive() {
 				// The handler needs to get the non-flag arguments
 				nonFlagArgs := fs.Args()
 
-				// Create context with flags
+				// Create context with flags - useIDP comes from startup flag, not per-command
 				ctx := &commandContext{
 					args:     strings.Join(nonFlagArgs, " "),
 					showCurl: showCurl,
 					showRaw:  showRaw,
+					useIDP:   useIDP, // Use the global flag from startup
 				}
 
 				c.Handler(ctx)
@@ -285,72 +307,149 @@ func filterCommandSuggest(q string, cmds []slashCommand) []prompt.Suggest {
 	return out
 }
 
-func buildCommands() []slashCommand {
-	return []slashCommand{
-		{
-			Name:        "create-key",
-			Description: "Generate a new API key",
-			Usage:       "/create-key [name]",
-			Handler:     handleCreateKey,
-		},
-		{
-			Name:        "create-team",
-			Description: "Create a new team with rate limits",
-			Usage:       "/create-team",
-			Handler:     handleCreateTeam,
-		},
-		{
-			Name:        "list-keys",
-			Description: "Show existing API keys",
-			Usage:       "/list-keys",
-			Handler:     handleListKeys,
-		},
-		{
-			Name:        "list-teams",
-			Description: "Show existing teams",
-			Usage:       "/list-teams",
-			Handler:     handleListTeams,
-		},
-		{
-			Name:        "usage",
-			Description: "View recent usage totals",
-			Usage:       "/usage",
-			Handler:     handleUsage,
-		},
-		{
-			Name:        "models",
-			Description: "See available models",
-			Usage:       "/models",
-			Handler:     handleModels,
-		},
-		{
-			Name:        "login",
-			Description: "Authenticate using device flow",
-			Usage:       "/login",
-			Handler: func(ctx *commandContext) {
-				v := buildConfigViper()
-				v.Set("skip-prompt", true)
-				if err := runLogin(v); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				}
+func buildCommands(useIDP bool) []slashCommand {
+	if useIDP {
+		// Legacy IDP mode - complete original functionality
+		return []slashCommand{
+			{
+				Name:        "create-key",
+				Description: "Generate a new API key",
+				Usage:       "/create-key [name]",
+				Handler:     handleCreateKey,
 			},
-		},
-		{
-			Name:        "help",
-			Description: "Show available commands",
-			Usage:       "/help",
-			Handler: func(ctx *commandContext) {
-				printCommandOverview(buildCommands())
+			{
+				Name:        "create-team",
+				Description: "Create a new team with rate limits",
+				Usage:       "/create-team",
+				Handler:     handleCreateTeam,
 			},
-		},
-		{
-			Name:        "exit",
-			Description: "Exit interactive mode",
-			Usage:       "/exit",
-			Handler: func(ctx *commandContext) {
-				fmt.Println("Goodbye.")
+			{
+				Name:        "list-keys",
+				Description: "Show existing API keys",
+				Usage:       "/list-keys",
+				Handler:     handleListKeys,
 			},
-		},
+			{
+				Name:        "list-teams",
+				Description: "Show existing teams",
+				Usage:       "/list-teams",
+				Handler:     handleListTeams,
+			},
+			{
+				Name:        "usage",
+				Description: "View recent usage totals",
+				Usage:       "/usage [namespace] [range]",
+				Handler:     handleUsage,
+			},
+			{
+				Name:        "models",
+				Description: "See available models",
+				Usage:       "/models",
+				Handler:     handleModels,
+			},
+			{
+				Name:        "login",
+				Description: "Authenticate using device flow",
+				Usage:       "/login",
+				Handler: func(ctx *commandContext) {
+					v := buildConfigViper()
+					v.Set("skip-prompt", true)
+					if err := runLogin(v); err != nil {
+						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					}
+				},
+			},
+			{
+				Name:        "help",
+				Description: "Show available commands",
+				Usage:       "/help",
+				Handler: func(ctx *commandContext) {
+					printCommandOverview(buildCommands(true))
+				},
+			},
+			{
+				Name:        "exit",
+				Description: "Exit interactive mode",
+				Usage:       "/exit",
+				Handler: func(ctx *commandContext) {
+					fmt.Println("Goodbye.")
+				},
+			},
+		}
+	} else {
+		// Base mode - clean MaaS billing API
+		return []slashCommand{
+			{
+				Name:        "get-endpoint",
+				Description: "Get MaaS gateway endpoint from OpenShift cluster",
+				Usage:       "/get-endpoint",
+				Handler:     handleGetEndpointBase,
+			},
+			{
+				Name:        "get-token",
+				Description: "Create a new service account token (default: 8h, examples: 1h, 30m, 24h)",
+				Usage:       "/get-token [expiration]",
+				Handler:     handleGetTokenBase,
+			},
+			{
+				Name:        "models",
+				Description: "List available models",
+				Usage:       "/models",
+				Handler:     handleModelsBase,
+			},
+			{
+				Name:        "test-model",
+				Description: "Test model endpoint with a prompt",
+				Usage:       "/test-model [model-name] [prompt]",
+				Handler:     handleTestModelBase,
+			},
+			{
+				Name:        "test-auth",
+				Description: "Test authorization (expect 401 without token)",
+				Usage:       "/test-auth [model-name]",
+				Handler:     handleTestAuthBase,
+			},
+			{
+				Name:        "test-rate-limit",
+				Description: "Test rate limiting with concurrent requests",
+				Usage:       "/test-rate-limit [model-name]",
+				Handler:     handleTestRateLimitBase,
+			},
+			{
+				Name:        "validate",
+				Description: "Run all validation steps like deployment script",
+				Usage:       "/validate",
+				Handler:     handleValidateBase,
+			},
+			{
+				Name:        "metrics",
+				Description: "View metrics and statistics",
+				Usage:       "/metrics [live-requests|policy-stats|dashboard]",
+				Handler:     handleMetricsBase,
+			},
+			{
+				Name:        "login",
+				Description: "Authenticate using OpenShift token",
+				Usage:       "/login",
+				Handler:     handleLoginBase,
+			},
+			{
+				Name:        "help",
+				Description: "Show available commands",
+				Usage:       "/help",
+				Handler: func(ctx *commandContext) {
+					printCommandOverview(buildCommands(false))
+				},
+			},
+			{
+				Name:        "exit",
+				Description: "Exit interactive mode",
+				Usage:       "/exit",
+				Handler: func(ctx *commandContext) {
+					fmt.Println("Goodbye.")
+				},
+			},
+		}
 	}
 }
 
@@ -1215,6 +1314,7 @@ func handleUsage(ctx *commandContext) {
 }
 
 func handleModels(ctx *commandContext) {
+	// Legacy IDP mode only
 	session, err := ensureSession()
 	if err != nil {
 		handleSessionError(err)
@@ -1488,12 +1588,16 @@ func buildConfigViper() *viper.Viper {
 	}
 	_ = v.ReadInConfig()
 
+	// Mode selection defaults
+	v.SetDefault("idp", false)
+	v.SetDefault("show-curl", false)
+
+	// Legacy IDP defaults (only used when --idp is set)
 	v.SetDefault("issuer-url", defaultIssuer)
 	v.SetDefault("hostname", "")
 	v.SetDefault("realm", "maas")
 	v.SetDefault("client-id", "maas-client")
 	v.SetDefault("client-secret", "maas-client-secret")
-	v.SetDefault("insecure", true)
 	v.SetDefault("no-browser", false)
 	v.SetDefault("web", true)
 	v.SetDefault("clipboard", false)
@@ -1505,6 +1609,11 @@ func buildConfigViper() *viper.Viper {
 	v.SetDefault("data-base", defaultDataBase)
 	v.SetDefault("usage-namespace", "")
 	v.SetDefault("usage-range", "24h")
+
+	// Base mode API defaults
+	v.SetDefault("maas-api-base", defaultMaasAPIBase)
+	v.SetDefault("insecure", true)
+
 	return v
 }
 
