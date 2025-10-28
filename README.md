@@ -100,6 +100,17 @@ Example: `/get-token 4h --show-curl`
    /test-model facebook/opt-125m Mewdy Partner
    ```
 
+## Display Curl Commands
+
+Since all of the functions run by the CLI are curl backed endpoints, you can add the `--show-curl` flag to any command and get the raw curl which is handy for debugging. For 
+
+- Example `▌> /test-model --show-curl` gives the curl command that can be run on from anywhere:
+
+```
+▌> /test-model --show-curl
+curl -X POST 'https://maas.apps.rosa.sjrus-jsp39-rzp.l9yq.p3.openshiftapps.com/llm/facebook-opt-125m-simulated/v1/chat/completions' -H 'Authorization: Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6InA2NmxtWG5xbEtIaGMycW4xS2YteHlQY18zOG9CNUhPd1RyTjl3eGpCSjQifQ.eyJhdWQiOlsibWFhcy1kZWZhdWx0LWdhdGV3YXktc2EiXSwiZXhwIjoxNzYxNjUxMTUwLCJpYXQiOjE3NjE2MjIzNTAsImlzcyI6Imh0dHBzOi8vcmgtb2lkYy5zMy51cy1lYXN0LTEuYW1hem9uYXdzLmNvbS8yN2JkNmNnMHZzN25uMDhtdWU4M2Zib2Y5NGRqNG05YSIsImp0aSI6ImRkNDJkZjgxLWFmMTYtNDllZi1iMDQ5LTUwOTVjMDZjOWZkNiIsImt1YmVybmV0ZXMuaW8iOnsibmFtZXNwYWNlIjoibWFhcy1kZWZhdWx0LWdhdGV3YXktdGllci1mcmVlIiwic2VydmljZWFjY291bnQiOnsibmFtZSI6ImNsdXN0ZXItYWRtaW4tYjA5MDY3YTYiLCJ1aWQiOiI1MmViMjRiYS1hN2I0LTQwNGQtYmZlZi0xNTdjOTNkZDU4ZTcifX0sIm5iZiI6MTc2MTYyMjM1MCwic3ViIjoic3lzdGVtOnNlcnZpY2VhY2NvdW50Om1hYXMtZGVmYXVsdC1nYXRld2F5LXRpZXItZnJlZTpjbHVzdGVyLWFkbWluLWIwOTA2N2E2In0.TEApRJ9l8CMf7cesD8p-Ggnk3yWtpkIurj2rZxFr9hHPTAPz8j5G0V3uhuzVD17K-qaDPv2UKWKZ-whD49liQNfkEF7cFy2-L9ynoqwl8FZyX6ibua6XD9ybsKRIMMBYQ9myJI2aQwAYGlV-PjSpLOKXHSVXGv-PJ7pomqgypHE9RnTR7yYPtt5d0i0oYU6X_0xcAUzFi8a3cPIM8Yj4pjATwDuva_Wj9qNyoh4RDoqkBvq75Yc3fU0w7N17kMjAxT-xOKoDqgFnQBB-FFYQYAU9qysCgiBIi35ka-wBvMRjlocg4j_ZgZH4wbufi_wkUV9DoHBWZidsWu8GNBF9wtWggVqzLw0xKaVU9-7tB1KhKtKXLNHPGinBngJUhLPcu9NttMiQDzpZU3He88i45y3OYvU1jFOKAsz9e4jywJuKtbDRhiam53VDkaqUS7QampNMNPBig8tgd2sQU6UBQISpVYIG-hfAWXhFXdn6Ue9kExIvkrkcpuqfi8NdhYUSnTY1ixns2RJUm8-4kyeB-HNU9rnxlI3caK1zOk6XeVvFVK1d15PZawBbq_nUUOMEeGseP7FTY6zDOEVIIDinbrLCRwTBiQvvtMk4VirjH04pilnZmm0KUsEGkYVF6chfyKgl6pdu2rLydZHQQ6V9eKs3AOywrnUrmLNrf-ukNzU' -H 'Content-Type: application/json' -d '{"max_tokens":50,"model":"facebook/opt-125m","prompt":"Hello"}'
+```
+
 ## Validation
 
 Run the complete validation suite to test all MaaS components:
