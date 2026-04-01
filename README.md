@@ -1,155 +1,333 @@
 # MaaS CLI
 
-Interactive CLI for MaaS (Model as a Service) with OpenShift authentication and service account token management.
+`maas-cli` is a CLI for the **Models-as-a-Service** platform. It wraps the documented API endpoints into simple commands — from API key creation through model discovery to interactive chat.
 
 ## Build
 
 ```bash
-go build -o maas-cli main.go base.go
-```
-
-## Usage
-
-Interactive mode (default - base mode):
-```bash
-./maas-cli
-```
-
-Type `/` to discover commands, `/get-token` to create a service account token, `/help` for all commands, `/exit` to quit.
-
-One-shot commands:
-```bash
-./maas-cli login        # Show login instructions
-./maas-cli interactive  # Start interactive REPL
+go build -o maas-cli .
 ```
 
 ## Prerequisites
 
-- OpenShift cluster access with `oc` and `kubectl` installed
-- Active OpenShift login session (e.g. `oc login`)
-- MaaS deployed in the cluster
+- `oc` and `kubectl` installed
+- Logged in to OpenShift (`oc login ...`)
+- MaaS deployed and reachable via `https://maas.<cluster-domain>`
 
-## Commands
+## Validation / Quick Start
 
-Available slash commands in interactive mode. [model-name] is optional, the first model returned will be used by default:
+This is the CLI equivalent of the curl-based validation flow from the deployment guide.
 
-- `/get-endpoint` - Get MaaS gateway endpoint from OpenShift cluster
-- `/get-token [expiration]` - Create a new service account token (default: 8h, examples: 1h, 30m, 24h)
-- `/models` - List available models
-- `/test-model [model-name] [prompt]` - Test model endpoint with a prompt
-- `/test-auth [model-name]` - Test authorization (expect 401 without token)
-- `/test-rate-limit [model-name]` - Test rate limiting with concurrent requests
-- `/validate` - Run all validation steps like deployment script
-- `/metrics` - View metrics and statistics
-- `/login` - Authenticate using OpenShift token
-- `/help` - Show available commands
-- `/exit` - Quit
-
-## Token Expiration
-
-The `/get-token` command supports custom expiration times:
+### With curl (what the docs show)
 
 ```bash
-/get-token          # Default 8 hours
-/get-token 1h       # 1 hour
-/get-token 30m      # 30 minutes
-/get-token 24h      # 24 hours
-/get-token 2h30m    # 2 hours and 30 minutes
+# Discover gateway
+HOST=$(kubectl get maasmodelref facebook-opt-125m-simulated -n llm \
+  -o jsonpath='{.status.endpoint}' | sed -E 's#(https://[^/]+).*#\1#')
+
+# Mint API key
+TOKEN=$(oc whoami -t)
+API_KEY=$(curl -sSk -X POST "$HOST/maas-api/v1/api-keys" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"validate-key","expiresIn":"2h"}' | jq -r '.key')
+
+# Chat
+curl -sSk "$HOST/llm/facebook-opt-125m-simulated/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{"model":"facebook/opt-125m","messages":[{"role":"user","content":"hello"}],"max_tokens":8}' | jq .
 ```
 
-Supported time units:
-- `h` = hours
-- `m` = minutes
-- `s` = seconds
+### With maas-cli (same thing, three commands)
 
-## Options
-
-Commands support these flags:
-- `--show-curl` - Print the curl command and exit
-- `--show-raw` - Show raw output from the curl command
-
-Example: `/get-token 4h --show-curl`
-
-## Quick Start
-
-1. **Login to OpenShift:**
-   ```bash
-   oc login <your-cluster-url>
-   ```
-
-2. **Start the CLI:**
-   ```bash
-   ./maas-cli
-   ```
-
-3. **Create a service account token:**
-   ```
-   /get-token
-   ```
-
-4. **List available models:**
-   ```
-   /models
-   ```
-
-5. **Test a model with a chat completion:**
-   ```
-   # Defualts to the first model in the list
-   /test-model
-   # Specify a model ID from the /models listing
-   /test-model facebook/opt-125m Mewdy Partner
-   ```
-
-## Display Curl Commands
-
-Since all of the functions run by the CLI are curl backed endpoints, you can add the `--show-curl` flag to any command and get the raw curl which is handy for debugging. For 
-
-- Example `▌> /test-model --show-curl` gives the curl command that can be run on from anywhere:
-
-```
-▌> /test-model --show-curl
-curl -X POST 'https://maas.apps.rosa.sjrus-jsp39-rzp.l9yq.p3.openshiftapps.com/llm/facebook-opt-125m-simulated/v1/chat/completions' -H 'Authorization: Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6InA2NmxtWG5xbEtIaGMycW4xS2YteHlQY18zOG9CNUhPd1RyTjl3eGpCSjQifQ.eyJhdWQiOlsibWFhcy1kZWZhdWx0LWdhdGV3YXktc2EiXSwiZXhwIjoxNzYxNjUxMTUwLCJpYXQiOjE3NjE2MjIzNTAsImlzcyI6Imh0dHBzOi8vcmgtb2lkYy5zMy51cy1lYXN0LTEuYW1hem9uYXdzLmNvbS8yN2JkNmNnMHZzN25uMDhtdWU4M2Zib2Y5NGRqNG05YSIsImp0aSI6ImRkNDJkZjgxLWFmMTYtNDllZi1iMDQ5LTUwOTVjMDZjOWZkNiIsImt1YmVybmV0ZXMuaW8iOnsibmFtZXNwYWNlIjoibWFhcy1kZWZhdWx0LWdhdGV3YXktdGllci1mcmVlIiwic2VydmljZWFjY291bnQiOnsibmFtZSI6ImNsdXN0ZXItYWRtaW4tYjA5MDY3YTYiLCJ1aWQiOiI1MmViMjRiYS1hN2I0LTQwNGQtYmZlZi0xNTdjOTNkZDU4ZTcifX0sIm5iZiI6MTc2MTYyMjM1MCwic3ViIjoic3lzdGVtOnNlcnZpY2VhY2NvdW50Om1hYXMtZGVmYXVsdC1nYXRld2F5LXRpZXItZnJlZTpjbHVzdGVyLWFkbWluLWIwOTA2N2E2In0.TEApRJ9l8CMf7cesD8p-Ggnk3yWtpkIurj2rZxFr9hHPTAPz8j5G0V3uhuzVD17K-qaDPv2UKWKZ-whD49liQNfkEF7cFy2-L9ynoqwl8FZyX6ibua6XD9ybsKRIMMBYQ9myJI2aQwAYGlV-PjSpLOKXHSVXGv-PJ7pomqgypHE9RnTR7yYPtt5d0i0oYU6X_0xcAUzFi8a3cPIM8Yj4pjATwDuva_Wj9qNyoh4RDoqkBvq75Yc3fU0w7N17kMjAxT-xOKoDqgFnQBB-FFYQYAU9qysCgiBIi35ka-wBvMRjlocg4j_ZgZH4wbufi_wkUV9DoHBWZidsWu8GNBF9wtWggVqzLw0xKaVU9-7tB1KhKtKXLNHPGinBngJUhLPcu9NttMiQDzpZU3He88i45y3OYvU1jFOKAsz9e4jywJuKtbDRhiam53VDkaqUS7QampNMNPBig8tgd2sQU6UBQISpVYIG-hfAWXhFXdn6Ue9kExIvkrkcpuqfi8NdhYUSnTY1ixns2RJUm8-4kyeB-HNU9rnxlI3caK1zOk6XeVvFVK1d15PZawBbq_nUUOMEeGseP7FTY6zDOEVIIDinbrLCRwTBiQvvtMk4VirjH04pilnZmm0KUsEGkYVF6chfyKgl6pdu2rLydZHQQ6V9eKs3AOywrnUrmLNrf-ukNzU' -H 'Content-Type: application/json' -d '{"max_tokens":50,"model":"facebook/opt-125m","prompt":"Hello"}'
-```
-
-## Validation
-
-Run the complete validation suite to test all MaaS components:
-
-```
-/validate
-```
-
-This will:
-1. Verify cluster connectivity and gateway endpoint
-2. Check service account token
-3. Test model endpoints
-4. Verify authorization is working (expect 401 without token)
-5. Test rate limiting with concurrent requests
-
-## Session Storage
-
-Tokens are automatically stored in `~/.maas-cli/base-session.json` for reuse across CLI sessions. The token includes:
-- Service account token
-- MaaS API base URL
-- Expiration time
-- Creation time
-
-Tokens are automatically validated and you'll be prompted to create a new one when expired.
-
-## Architecture
-
-The base mode uses:
-- **Authentication**: OpenShift OAuth with service account tokens
-- **API**: MaaS billing API (`/maas-api/v1/tokens`, `/maas-api/v1/models`)
-- **Inference**: Model endpoints (`/llm/{model}/v1/chat/completions`)
-- **Auto-detection**: Cluster domain and MaaS gateway endpoint
-
-## Experimental IDP Mode
-
-For deployments using Keycloak device-flow authentication with PostgreSQL backing, see [README-experimental.md](./README-experimental.md).
-
-To use IDP mode:
 ```bash
-./maas-cli --idp
+# 1) Set the endpoint
+#    Option A: auto-discover from cluster (requires kubectl + oc login)
+maas-cli endpoint
+#    Option B: set it explicitly (if auto-discovery doesn't work or you're off-cluster)
+export MAAS_API_URL=https://maas.apps.your-cluster.example.com
+
+# 2) Mint an API key (auto-runs oc whoami -t)
+maas-cli create-api-key --name validate-key --expires-in 2h
+
+# 3) Chat with the model
+maas-cli chat --prompt "hello" --max-tokens 8
 ```
 
+> **Note:** Auto-discovery relies on `kubectl get ingresses.config.openshift.io` which may not work if you're running outside the cluster, don't have cluster-reader permissions, or are using a non-OpenShift cluster. In those cases, set `MAAS_API_URL` or pass `--maas-api-url` directly.
+
+The CLI saves the API key to the session, discovers the model URL via `/v1/models`, and sends the chat request — no jq, no variable juggling.
+
+### From the interactive shell
+
+```
+$ ./maas-cli
+
+ ███░   ███░ █████░  █████░ ███████░     ██████░██░     ██░
+ ████░ ████░██░░░██░██░░░██░██░░░░░░    ██░░░░░░██░     ██░
+ ██░████░██░███████░███████░███████░    ██░     ██░     ██░
+ ██░░██░░██░██░░░██░██░░░██░░░░░░██░    ██░     ██░     ██░
+ ██░ ░░░ ██░██░  ██░██░  ██░███████░    ░██████░███████░██░
+ ░░░      ░░░░░   ░░░░░   ░░░░░░░░░░      ░░░░░░░░░░░░░░░░░
+ ...
+
+  Endpoint: https://maas.apps.your-cluster.example.com
+  API Key:  sk-oai-qwibNpZohbug...
+  Model:    facebook/opt-125m
+
+  Type / to see commands, /help for details, /exit or Ctrl-D to quit.
+
+maas> /endpoint
+https://maas.apps.your-cluster.example.com
+
+maas> /create-api-key --name validate-key --expires-in 2h
+{
+  "createdAt": "2026-04-01T06:33:53Z",
+  "ephemeral": false,
+  "expiresAt": "2026-04-01T08:33:53Z",
+  "id": "db61da9e-359c-4d9d-a53f-c2297741b5ea",
+  "key": "sk-oai-qwibNpZohbug4E94...",
+  "keyPrefix": "sk-oai-qwibNpZohbug...",
+  "name": "validate-key",
+  "subscription": "simulator-subscription"
+}
+Saved API URL and API key in ~/.maas-cli/session.json
+
+maas> /models
+{
+  "data": [
+    {
+      "id": "facebook/opt-125m",
+      "url": "https://maas.apps.your-cluster.example.com/llm/facebook-opt-125m-simulated",
+      "ready": true,
+      ...
+    }
+  ]
+}
+
+maas> /chat hello
+  Model: facebook/opt-125m
+  URL:   https://maas.apps.your-cluster.example.com/llm/facebook-opt-125m-simulated/v1/chat/completions
+
+assistant> I am fine, how are you today?
+
+maas> /chat what can you help me with?
+assistant> I can help you with a wide variety of tasks...
+
+maas> /chat-history
+[user] hello
+[assistant] I am fine, how are you today?
+[user] what can you help me with?
+[assistant] I can help you with a wide variety of tasks...
+
+maas> /chat-clear
+Chat history cleared.
+
+maas> /exit
+Goodbye!
+```
+
+Each step saves state to the session, so you never re-type endpoints or keys.
+
+### Pointing at a different endpoint
+
+If auto-detection doesn't work (e.g. remote cluster, no `kubectl`), set the endpoint explicitly:
+
+```bash
+# Environment variable
+export MAAS_API_URL=https://maas.apps.your-cluster.example.com
+
+# Or per-command flag
+maas-cli models --maas-api-url https://maas.apps.your-cluster.example.com
+
+# Or once — it gets saved to the session
+maas-cli endpoint --maas-api-url https://maas.apps.your-cluster.example.com
+```
+
+## Interactive Shell
+
+Run `maas-cli` with no arguments to enter the interactive REPL:
+
+```
+$ ./maas-cli
+
+ ███░   ███░ █████░  █████░ ███████░     ██████░██░     ██░
+ ████░ ████░██░░░██░██░░░██░██░░░░░░    ██░░░░░░██░     ██░
+ ██░████░██░███████░███████░███████░    ██░     ██░     ██░
+ ██░░██░░██░██░░░██░██░░░██░░░░░░██░    ██░     ██░     ██░
+ ██░ ░░░ ██░██░  ██░██░  ██░███████░    ░██████░███████░██░
+ ░░░      ░░░░░   ░░░░░   ░░░░░░░░░░      ░░░░░░░░░░░░░░░░░
+
+  Type / to see commands, /help for details, /exit or Ctrl-D to quit.
+
+maas>
+```
+
+Type `/` and tab-complete through commands. The REPL shows your current session state (endpoint, API key, model) on startup.
+
+### REPL Commands
+
+| Command | Description |
+|---------|-------------|
+| `/endpoint` | Detect MaaS API URL from cluster |
+| `/create-api-key` | Create an API key (+ flags like `--name`, `--expires-in`) |
+| `/revoke-api-key` | Revoke an API key (`--key-id`) |
+| `/list-api-keys` | Search/list your API keys |
+| `/subscriptions` | List accessible subscriptions |
+| `/models` | List available models |
+| `/chat <message>` | Send a chat message (multi-turn history kept) |
+| `/chat-clear` | Clear chat conversation history |
+| `/chat-history` | Show chat conversation so far |
+| `/session` | Show current session state |
+| `/help` | Show available commands |
+| `/exit`, `Ctrl-D` | Quit |
+
+## CLI Commands
+
+All commands are also available directly from the shell:
+
+| Command | Description |
+|---------|-------------|
+| `maas-cli endpoint` | Auto-detect MaaS API URL from the cluster |
+| `maas-cli create-api-key` | Mint an API key (`POST /maas-api/v1/api-keys`) |
+| `maas-cli revoke-api-key` | Revoke a key (`DELETE /maas-api/v1/api-keys/{id}`) |
+| `maas-cli list-api-keys` | Search/list keys (`POST /maas-api/v1/api-keys/search`) |
+| `maas-cli subscriptions` | List accessible subscriptions (`GET /v1/subscriptions`) |
+| `maas-cli models` | List available models (`GET /v1/models`) |
+| `maas-cli chat` | Single-shot chat (`POST {model_url}/v1/chat/completions`) |
+
+## Demo Walkthrough
+
+```bash
+# 1) Discover the MaaS endpoint
+MAAS_API_URL=$(maas-cli endpoint)
+
+# 2) Mint an API key (uses `oc whoami -t` automatically)
+maas-cli create-api-key \
+  --maas-api-url "$MAAS_API_URL" \
+  --name demo-key \
+  --description "Demo key" \
+  --expires-in 1h
+
+# 3) See what subscriptions you have access to
+maas-cli subscriptions
+
+# 4) List available models
+maas-cli models
+
+# 5) Send a single prompt
+maas-cli chat --prompt "What is Kubernetes?"
+
+# 6) Or use the REPL for multi-turn chat
+./maas-cli
+maas> /chat What is Kubernetes?
+maas> /chat Tell me more about pods
+```
+
+The CLI saves the API URL, API key, and last-used model to `~/.maas-cli/session.json`, so subsequent commands don't need flags repeated.
+
+## Key Management
+
+```bash
+# Create a key bound to a specific subscription
+maas-cli create-api-key --name prod-key --subscription premium --expires-in 90d
+
+# List your active keys
+maas-cli list-api-keys
+
+# Include revoked/expired keys
+maas-cli list-api-keys --status active,revoked,expired
+
+# Revoke a specific key
+maas-cli revoke-api-key --key-id key_abc123
+
+# Revoke the last key you created (from session)
+maas-cli revoke-api-key
+```
+
+## Command Flags
+
+### `create-api-key`
+
+| Flag | Description |
+|------|-------------|
+| `--maas-api-url` | Override endpoint auto-detection |
+| `--oc-token` | Bypass `oc whoami -t` |
+| `--name` | Key name (default: `maas-cli-key`) |
+| `--description` | Key description |
+| `--expires-in` | e.g. `90d`, `30d`, `1h` |
+| `--subscription` | Bind key to a MaaSSubscription |
+| `--ephemeral` | Short-lived key (max 1h) |
+| `--no-save` | Don't save to session |
+| `--show-curl` | Print equivalent curl only |
+
+### `revoke-api-key`
+
+| Flag | Description |
+|------|-------------|
+| `--key-id` | Key ID to revoke (defaults to session) |
+| `--oc-token` | OpenShift token |
+| `--show-curl` | Print equivalent curl only |
+
+### `list-api-keys`
+
+| Flag | Description |
+|------|-------------|
+| `--status` | Filter: `active`, `revoked`, `expired` (comma-separated) |
+| `--include-ephemeral` | Include ephemeral keys |
+| `--sort-by` | `created_at`, `expires_at`, `last_used_at`, `name` |
+| `--sort-order` | `asc` or `desc` |
+| `--limit` | Max results 1-100 (default: 50) |
+| `--offset` | Pagination offset |
+| `--show-curl` | Print equivalent curl only |
+
+### `subscriptions`
+
+| Flag | Description |
+|------|-------------|
+| `--oc-token` | OpenShift token |
+| `--model-id` | Filter subscriptions for a specific model |
+| `--show-curl` | Print equivalent curl only |
+
+### `models`
+
+| Flag | Description |
+|------|-------------|
+| `--oc-token` | OpenShift token |
+| `--subscription` | `X-MaaS-Subscription` header |
+| `--show-curl` | Print equivalent curl only |
+
+### `chat`
+
+| Flag | Description |
+|------|-------------|
+| `--prompt` | User prompt |
+| `--model-id` | Pick model from `/v1/models` |
+| `--model-url` | Call explicit model endpoint directly |
+| `--max-tokens` | Max tokens (default: 100) |
+| `--stream` | Streaming completion mode |
+| `--show-curl` | Print equivalent curl only |
+
+## Session
+
+By default, the CLI stores state in `~/.maas-cli/session.json`:
+
+- `maas_api_url` — auto-detected or explicit
+- `api_key` / `api_key_id` — last minted key
+- `subscription` — bound subscription
+- `last_model_id` / `last_model_url` — last used model
+
+This allows progressive use: after `create-api-key`, subsequent commands work without repeating flags.
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `MAAS_API_URL` | MaaS API base URL |
+| `MAAS_API_KEY` | API key for model access |
+| `OC_TOKEN` | OpenShift token (bypass `oc whoami -t`) |
+
+## `--show-curl`
+
+Every command supports `--show-curl` to print the equivalent `curl` command without making a live request. Useful for debugging, documentation, or running in a different terminal.
